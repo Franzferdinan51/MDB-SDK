@@ -1,0 +1,6 @@
+# MDB host tools — the only two third-party dependencies, both used lazily
+# by mdb_client (pyserial when opening a real port, Pillow when converting
+# a screenshot). The MCP server itself is hand-rolled JSON-RPC over stdio
+# and needs nothing beyond the standard library.
+pyserial>=3.5
+Pillow>=9.0
