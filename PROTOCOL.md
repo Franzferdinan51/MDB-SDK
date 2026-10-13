@@ -220,19 +220,25 @@ Press at (x1, y1), a sequence of move events along the straight line to
 50–5000; outside → `ERR out_of_range`. → `OK`
 
 #### `mdb press <button>`
-Button ∈ {`boot`, `ptt`} on the reference hardware (the side/boot key and
-the push-to-talk key). A press+release pair. Unknown name →
-`ERR bad_args`. → `OK`
+Button ∈ {`boot`, `pwr`} on the reference hardware (the BOOT key and the
+PWR side key; a `pwr` press is short and toggles sleep per the power
+policy). A press+release pair. Unknown name → `ERR bad_args`. → `OK`
+`mdb press ptt` is PLANNED, not implemented: PTT is an on-screen target
+in the reference firmware, not a hardware button, and the command
+currently returns an `ERR` explaining this (use `mdb tap` on the PTT
+target, or `mdb press boot`).
 
 #### `mdb goto <screen>`
 Navigate directly to a firmware screen by id, through the shell's normal
 navigation (not simulated touches). Screen ids are firmware-defined;
-reference ids: `clock`, `launcher`, `settings`, `chat`, `weather`,
-`notifications`. Unknown id → `ERR bad_args`. → `OK screen=<id>`
+reference ids (the reference firmware app ids): `clock`, `launcher`,
+`muse`, `hermes`, `settings`, `notifications`, `weather`. Unknown id →
+`ERR bad_args`. → `OK screen=<id>`
 
 #### `mdb open <app>`
-Open an app by id through the shell's app launcher. Reference ids:
-`muse`, `hermes`, `weather`, `settings`. Unknown id → `ERR bad_args`.
+Open an app by id through the shell's app launcher. Reference ids (the
+reference firmware app ids): `clock`, `launcher`, `muse`, `hermes`,
+`settings`, `notifications`, `weather`. Unknown id → `ERR bad_args`.
 → `OK app=<id>`
 
 #### `mdb wake` / `mdb sleep`
@@ -272,6 +278,53 @@ The device parses and applies it atomically: on success
 NOT** echo the string or any of its values back, including in logs.
 This is the sanctioned provisioning route: it replaces reflashing to
 change Wi-Fi credentials or tokens.
+
+### 5.5 Diagnostics (reference firmware)
+
+Bench diagnostics shipped in the reference firmware. Each of `i2c`,
+`tpoll` and `tpoll2` answers with a framed text block: a
+`<NAME>_BEGIN` line, free-form diagnostic lines, and a `<NAME>_END`
+line; hosts read to the END marker and **MUST** treat the body as
+opaque text. These verbs are debug-grade: they transact on the shared
+I2C bus directly and can disturb normal operation. Device addresses
+named below are the reference board's.
+
+#### `mdb i2c`
+→ `MDB_I2C_BEGIN` … `MDB_I2C_END` block: a bus scan line (`scan:` plus
+the hex addresses that ACK), labelled probe reads against the touch
+controller (several registers, bus speeds and transaction shapes,
+including chip-id and firmware-version registers), the RTC and the
+PMU, a no-op write control, a burst summary
+(`touch burst reg02: <n>/10 ok`), and the resting bus pin levels
+(`pins: scl=<0|1> sda=<0|1>`) — a line held low points at whatever is
+holding the bus. No bus available → `ERR no i2c bus`.
+
+#### `mdb tpoll`
+→ `MDB_TPOLL_BEGIN` … `MDB_TPOLL_END` block. Touch-read A/B: two raw
+phases of direct register reads (`raw phase<n>: <ok>/10 ok`, first
+error named when any fail) bracketing 30 production-path reads at the
+main-loop cadence (`panel read_touch x30 @100ms: <n> nonzero`).
+Separates a sick bus/chip from a sick production read path.
+
+#### `mdb tpoll2`
+→ `MDB_TPOLL2_BEGIN` … `MDB_TPOLL2_END` block. Production-path
+attribution: the boot-time panel-IO handle, a freshly created handle,
+and the production handle again after a bus reset each read the touch
+register (`<label>: <ok>/<n> ok`, `bus_reset: <err-name>`), followed
+by the cumulative production counters line:
+`tstat: ok=<n> fail=<n> first_fail_ms=<ms> last_err=<name>`.
+Bus or panel IO unavailable → `ERR no bus/io` inside the block.
+
+#### `mdb frame` / `mdb frame off`
+Latches a safe-area calibration card over every composed frame:
+concentric borders at insets 0/8/16/24/32 px (white/green/yellow/
+orange/red), edge ticks every 8 px with coordinate labels every
+16 px, and a centre crosshair — for measuring the panel's visible
+area against the bezel/cover glass. → `OK frame on` / `OK frame off`.
+RAM-latched only: cleared by `mdb frame off` or by reboot. Turning it
+on also wakes the panel. Pair with `mdb screenshot` for framebuffer
+proof — freeze the frame first (e.g. `mdb sleep`): a live dump of an
+animating screen tears.
 
 ## 6. Redaction rules (normative)
 
