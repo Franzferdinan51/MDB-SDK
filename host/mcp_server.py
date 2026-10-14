@@ -276,7 +276,8 @@ TOOLS = [
             "Read or change the watch's settings live: volume, speaker_on, "
             "mic_gain, brightness, sleep_s, wifi_on, ble_on, avatar (the "
             "watch face: gif, pixel, pixelgif, jolly, ink, knight, bubble, "
-            "hires, studio). action=all returns every setting as JSON; "
+            "hires, studio), power_mode (Low Power policy: auto|on|off). "
+            "action=all returns every setting as JSON; "
             "get/set take a key (set is range-checked by the device and "
             "persists)."
         ),

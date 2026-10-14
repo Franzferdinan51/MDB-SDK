@@ -344,9 +344,9 @@ redaction rules of §6 still bind every verb below.
 
 | Command | Payload | Notes |
 | --- | --- | --- |
-| `mdb settings` | JSON (4.2) | All settings: volume, speaker_on, mic_gain, brightness, sleep_s, wifi_on, ble_on, avatar |
+| `mdb settings` | JSON (4.2) | All settings: volume, speaker_on, mic_gain, brightness, sleep_s, wifi_on, ble_on, avatar, power_mode |
 | `mdb settings get <key>` | none | `OK key=value` |
-| `mdb settings set <key> <value>` | none | Device range-checks (volume 0–100, brightness 10–100, mic_gain 0–36, sleep_s 0–86400, booleans on/off, avatar one of `gif`, `pixel`, `pixelgif`, `jolly`, `ink`, `knight`, `bubble`, `hires`, `studio` — the watch face; firmware ≥1.7.25, earlier builds accept the first three); persists and applies live |
+| `mdb settings set <key> <value>` | none | Device range-checks (volume 0–100, brightness 10–100, mic_gain 0–36, sleep_s 0–86400, booleans on/off, avatar one of `gif`, `pixel`, `pixelgif`, `jolly`, `ink`, `knight`, `bubble`, `hires`, `studio` — the watch face; firmware ≥1.7.25, earlier builds accept the first three; power_mode one of `auto`, `on`, `off` — the Low Power policy, firmware ≥1.7.29); persists and applies live |
 | `mdb sd status` | JSON (4.2) | sd_present, sd_total_mb, sd_free_mb, tts_key_on_sd |
 | `mdb sd mount` | none | Mount (or re-mount) the card; never formats |
 | `mdb sd ls [path]` | lines + `END ls <n>` | `D <name>` / `F <name> <size>` |

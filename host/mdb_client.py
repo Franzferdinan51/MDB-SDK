@@ -515,8 +515,9 @@ class MdbClient:
 
     def settings_set(self, key: str, value: object) -> Dict[str, object]:
         """Set one setting live (volume, brightness, mic_gain, sleep_s,
-        speaker_on, wifi_on, ble_on, avatar). The device range-checks;
-        avatar takes one of AVATAR_NAMES."""
+        speaker_on, wifi_on, ble_on, avatar, power_mode). The device
+        range-checks; avatar takes one of AVATAR_NAMES, power_mode
+        one of auto|on|off (the Low Power policy, firmware >= 1.7.29)."""
         return self._execute("settings", "set", key, value)
 
     def set_avatar(self, name: str) -> Dict[str, object]:
