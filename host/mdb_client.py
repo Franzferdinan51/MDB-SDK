@@ -237,11 +237,15 @@ class MdbClient:
         """Read one line; raise MdbTimeoutError once past ``deadline``."""
         conn = self._require_conn()
         while True:
+            # Check the deadline BEFORE reading, not only on empty reads:
+            # a chatty device (boot logs, heartbeats) keeps readline()
+            # returning lines forever, so the old empty-only check let a
+            # lost reply hang the caller indefinitely.
+            if time.monotonic() > deadline:
+                raise MdbTimeoutError()
             raw = conn.readline()
             if raw:
                 return raw.decode("ascii", errors="replace").rstrip("\r\n")
-            if time.monotonic() > deadline:
-                raise MdbTimeoutError()
             # pyserial returns b"" on its own short timeout; loop until ours.
 
     def _await_status(self, timeout: Optional[float] = None) -> Tuple[bool, Dict[str, object]]:
@@ -313,11 +317,13 @@ class MdbClient:
         conn = self._require_conn()
         buf = bytearray()
         while len(buf) < n:
+            # Same deadline discipline as _read_line: interleaved log
+            # noise keeps reads non-empty, so check the clock every pass.
+            if time.monotonic() > deadline:
+                raise MdbTimeoutError(f"screenshot payload stalled at {len(buf)}/{n} bytes")
             chunk = conn.read(n - len(buf))
             if chunk:
                 buf.extend(chunk)
-            elif time.monotonic() > deadline:
-                raise MdbTimeoutError(f"screenshot payload stalled at {len(buf)}/{n} bytes")
         return bytes(buf)
 
     def screenshot(self) -> Screenshot:
