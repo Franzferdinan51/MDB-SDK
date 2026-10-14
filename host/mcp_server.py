@@ -119,6 +119,50 @@ def _call_tool(name: str, args: dict) -> dict:
                 finally:
                     _drop_client()  # the link is gone; reconnect lazily next call
                 return _text("reboot command accepted; the watch is restarting")
+            if name == "watch_settings":
+                action = str(args.get("action", "all"))
+                if action == "set":
+                    v = args["value"]
+                    if isinstance(v, bool):
+                        v = "on" if v else "off"
+                    return _text(json.dumps(client.settings_set(str(args["key"]), v)))
+                if action == "get":
+                    return _text(json.dumps(client.settings_get(str(args["key"]))))
+                return _text(json.dumps(client.settings_all(), indent=2, sort_keys=True))
+            if name == "watch_sd":
+                action = str(args.get("action", "status"))
+                if action == "mount":
+                    return _text(json.dumps(client.sd_mount()))
+                if action == "ls":
+                    return _text("\n".join(client.sd_ls(str(args.get("path", "/")))))
+                if action == "cat":
+                    return _text(client.sd_cat(str(args["path"])))
+                if action == "rm":
+                    return _text(json.dumps(client.sd_rm(str(args["path"]))))
+                if action == "write":
+                    return _text(json.dumps(client.sd_write(str(args["path"]), str(args["data"]).encode())))
+                return _text(json.dumps(client.sd_status(), indent=2, sort_keys=True))
+            if name == "watch_sys":
+                what = str(args.get("what", "info"))
+                if what == "heap":
+                    return _text(json.dumps(client.sys_heap(), indent=2, sort_keys=True))
+                if what == "tasks":
+                    return _text("\n".join(client.sys_tasks()))
+                return _text(json.dumps(client.sys_info(), indent=2, sort_keys=True))
+            if name == "watch_nvs":
+                action = str(args.get("action", "list"))
+                if action == "erase":
+                    return _text(json.dumps(client.nvs_erase(str(args["ns"]), str(args["key"]))))
+                if action == "erase-ns":
+                    return _text(json.dumps(client.nvs_erase_ns(str(args["ns"]))))
+                ns = args.get("ns")
+                return _text("\n".join(client.nvs_list(str(ns) if ns else None)))
+            if name == "watch_poweroff":
+                try:
+                    client.poweroff()
+                finally:
+                    _drop_client()
+                return _text("poweroff accepted; the watch is off")
             return _text(f"unknown tool: {name}", is_error=True)
         except MdbError as exc:
             return _text(f"ERR {exc.code}: {exc.message}", is_error=True)
@@ -204,6 +248,80 @@ TOOLS = [
             "battery, wifi, Muse/Hermes link states, config PRESENCE flags only "
             "(never values)."
         ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "watch_settings",
+        "description": (
+            "Read or change the watch's settings live: volume, speaker_on, "
+            "mic_gain, brightness, sleep_s, wifi_on, ble_on. action=all "
+            "returns every setting as JSON; get/set take a key (set is "
+            "range-checked by the device and persists)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["all", "get", "set"]},
+                "key": {"type": "string"},
+                "value": {},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "watch_sd",
+        "description": (
+            "Control the watch's SD card. action=status|mount|ls|cat|rm|write. "
+            "cat reads a text file (8 KB cap; *.key files are refused — secret "
+            "contents never cross the bridge). write stores one small chunk "
+            "(<=160 bytes: key/config files). rm is owner-confirmed server-side."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["status", "mount", "ls", "cat", "rm", "write"]},
+                "path": {"type": "string"},
+                "data": {"type": "string"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "watch_sys",
+        "description": (
+            "OS-level state. what=info: chip, IDF version, flash size, "
+            "firmware, reset reason, boot/panic counters, full partition "
+            "table. what=heap: internal/PSRAM/DMA free + largest blocks. "
+            "what=tasks: FreeRTOS tasks with state, priority, stack "
+            "high-water marks."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"what": {"type": "string", "enum": ["info", "heap", "tasks"]}},
+            "required": [],
+        },
+    },
+    {
+        "name": "watch_nvs",
+        "description": (
+            "Inspect and control NVS storage. action=list [ns] shows "
+            "namespace/key/type with numeric values; string and blob values "
+            "report length only, never contents. erase / erase-ns delete "
+            "(the client sends the confirm token; treat as destructive)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["list", "erase", "erase-ns"]},
+                "ns": {"type": "string"},
+                "key": {"type": "string"},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "watch_poweroff",
+        "description": "Power the watch fully off (PMIC cut) until the power button or USB returns.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     {

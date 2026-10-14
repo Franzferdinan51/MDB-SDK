@@ -1,6 +1,6 @@
 # MDB Wire Protocol
 
-**Version 0.1-draft** — authored to match the MDB implementation landing in
+**Version 0.2** — authored to match the MDB implementation landing in
 AIWatchOS (reference firmware). This document is the contract between the
 firmware-side MDB dispatcher and every host tool (client library, CLI, MCP
 server). If a shipping firmware's `docs/mdb.md` ever disagrees with this
@@ -325,6 +325,36 @@ RAM-latched only: cleared by `mdb frame off` or by reboot. Turning it
 on also wakes the panel. Pair with `mdb screenshot` for framebuffer
 proof — freeze the frame first (e.g. `mdb sleep`): a live dump of an
 animating screen tears.
+
+### 5.6 Device & OS control (protocol 2)
+
+Protocol 2 (firmware `mdb version` reports `protocol=2`) extends the
+bridge from diagnostics to full owner control of the device. The
+redaction rules of §6 still bind every verb below.
+
+| Command | Payload | Notes |
+| --- | --- | --- |
+| `mdb settings` | JSON (4.2) | All settings: volume, speaker_on, mic_gain, brightness, sleep_s, wifi_on, ble_on |
+| `mdb settings get <key>` | none | `OK key=value` |
+| `mdb settings set <key> <value>` | none | Device range-checks (volume 0–100, brightness 10–100, mic_gain 0–36, sleep_s 0–86400, booleans on/off); persists and applies live |
+| `mdb sd status` | JSON (4.2) | sd_present, sd_total_mb, sd_free_mb, tts_key_on_sd |
+| `mdb sd mount` | none | Mount (or re-mount) the card; never formats |
+| `mdb sd ls [path]` | lines + `END ls <n>` | `D <name>` / `F <name> <size>` |
+| `mdb sd cat <path>` | text + `END cat <n> bytes` | 8 KB cap; **refuses `*.key` paths** — secret contents never cross |
+| `mdb sd write <path> <base64>` | none | Whole-file write of one chunk (≤192 B decoded): key/config-sized files |
+| `mdb sd rm <path> confirm` | none | The literal `confirm` token is required |
+| `mdb sys info` | JSON ×2 (4.2) | Chip, IDF, flash, firmware, board, reset reason, boot/panic counters, uptime; second line carries the partition table |
+| `mdb sys heap` | JSON (4.2) | internal/PSRAM free, largest block, min-free; DMA free |
+| `mdb sys tasks` | lines + `END tasks <n>` | `name state prio=<p> stack_hwm=<bytes>` per FreeRTOS task |
+| `mdb nvs list [ns]` | lines + `END nvs <n>` | `ns key type [value]`; strings/blobs report `len=` only |
+| `mdb nvs erase <ns> <key> confirm` | none | Destructive; confirm token required |
+| `mdb nvs erase-ns <ns> confirm` | none | Destructive; confirm token required |
+| `mdb loglevel <tag|\*> <level>` | none | Runtime esp_log control: none/error/warn/info/debug/verbose |
+| `mdb poweroff` | none | PMIC power cut; device stays off until power button / USB |
+
+List-shaped payloads end with an `END …` terminator line so hosts can
+frame them without timeouts (an extension of the counted-lines shape,
+§4.3).
 
 ## 6. Redaction rules (normative)
 

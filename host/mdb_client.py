@@ -23,6 +23,7 @@ Example:
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import re
@@ -200,7 +201,43 @@ class MdbClient:
             import serial  # lazy import (pyserial)
 
             self._conn = serial.Serial(self.port, self.baud, timeout=self.timeout)
+            self._settle_after_open()
         return self
+
+    def _settle_after_open(self) -> None:
+        '''Opening the port resets the reference hardware (USB-serial-
+        JTAG): bytes written during its boot are lost, so a command sent
+        immediately after connect() falls into the void and times out.
+        Drain the boot log until the firmware banner appears or the
+        stream goes quiet (1.5 s), bounded at 10 s, then restore the
+        caller's timeout. Best-effort: any failure just proceeds.'''
+        conn = self._conn
+        try:
+            conn.timeout = 0.25
+            deadline = time.monotonic() + 10.0
+            quiet_since: Optional[float] = None
+            while time.monotonic() < deadline:
+                raw = conn.readline()
+                now = time.monotonic()
+                if raw:
+                    quiet_since = None
+                    line = raw.decode("ascii", errors="replace").rstrip("\r\n")
+                    if line:
+                        self._noise.append(line)
+                    if "MDB ready" in line:
+                        break
+                else:
+                    if quiet_since is None:
+                        quiet_since = now
+                    elif now - quiet_since >= 1.5:
+                        break
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.timeout = self.timeout
+            except Exception:
+                pass
 
     def close(self) -> None:
         if self._conn is not None:
@@ -443,6 +480,102 @@ class MdbClient:
         self._write_line(f"mdb config set {setup_string}")
         _, meta = self._await_status()
         return int(meta.get("applied", 0))
+
+    # ------------------------------------------------------------------
+    # protocol 2: settings, SD card, OS state, NVS — full device control
+    # ------------------------------------------------------------------
+    def _lines_until_end(self) -> List[str]:
+        """Collect payload lines up to the firmware's END terminator."""
+        deadline = time.monotonic() + self.timeout
+        lines: List[str] = []
+        while True:
+            line = self._read_line(deadline)
+            if line.startswith("END "):
+                return lines
+            lines.append(line)
+
+    def settings_all(self) -> dict:
+        """Every watch setting as JSON (values are state, not secrets)."""
+        return self._json_command("settings")
+
+    def settings_get(self, key: str) -> Dict[str, object]:
+        return self._execute("settings", "get", key)
+
+    def settings_set(self, key: str, value: object) -> Dict[str, object]:
+        """Set one setting live (volume, brightness, mic_gain, sleep_s,
+        speaker_on, wifi_on, ble_on). The device range-checks."""
+        return self._execute("settings", "set", key, value)
+
+    def sd_status(self) -> dict:
+        return self._json_command("sd status")
+
+    def sd_mount(self) -> Dict[str, object]:
+        return self._execute("sd", "mount")
+
+    def sd_ls(self, path: str = "/") -> List[str]:
+        """Directory listing lines: 'D name' / 'F name size'."""
+        self._write_line(f"mdb sd ls {path}")
+        self._await_status()
+        return self._lines_until_end()
+
+    def sd_cat(self, path: str) -> str:
+        """Read a text file (device caps at 8 KB and refuses *.key)."""
+        self._write_line(f"mdb sd cat {path}")
+        self._await_status()
+        return "\n".join(self._lines_until_end())
+
+    def sd_write(self, path: str, data: bytes) -> Dict[str, object]:
+        """Whole-file write of one small chunk (<=160 bytes decoded):
+        key/config-sized files. Larger files are out of scope for MDB."""
+        if len(data) > 160:
+            raise MdbError("bad_args", "sd write is one chunk (<=160 bytes)")
+        return self._execute("sd", "write", path,
+                             base64.b64encode(data).decode("ascii"))
+
+    def sd_rm(self, path: str) -> Dict[str, object]:
+        return self._execute("sd", "rm", path, "confirm")
+
+    def sys_info(self) -> dict:
+        """Chip/IDF/flash/firmware + the full partition table."""
+        info = self._json_command("sys info")
+        deadline = time.monotonic() + self.timeout
+        while True:
+            line = self._read_line(deadline)
+            if line.startswith("{"):
+                info["partitions"] = json.loads(line).get("partitions", [])
+                return info
+
+    def sys_heap(self) -> dict:
+        return self._json_command("sys heap")
+
+    def sys_tasks(self) -> List[str]:
+        """FreeRTOS task lines: 'name state prio= stack_hwm='."""
+        self._write_line("mdb sys tasks")
+        self._await_status()
+        return self._lines_until_end()
+
+    def nvs_list(self, namespace: Optional[str] = None) -> List[str]:
+        """NVS entries: 'ns key type [value|len=N]'. String/blob VALUES
+        never cross — length only (PROTOCOL.md redaction rules)."""
+        self._write_line("mdb nvs list" + (f" {namespace}" if namespace else ""))
+        self._await_status()
+        return self._lines_until_end()
+
+    def nvs_erase(self, namespace: str, key: str) -> Dict[str, object]:
+        return self._execute("nvs", "erase", namespace, key, "confirm")
+
+    def nvs_erase_ns(self, namespace: str) -> Dict[str, object]:
+        return self._execute("nvs", "erase-ns", namespace, "confirm")
+
+    def set_log_level(self, tag: str, level: str) -> Dict[str, object]:
+        """Runtime log control: tag ('*' = all), level none|error|warn|
+        info|debug|verbose."""
+        return self._execute("loglevel", tag, level)
+
+    def poweroff(self) -> Dict[str, object]:
+        """Power the watch off (PMIC cut). It stays off until the power
+        button or USB power returns."""
+        return self._execute("poweroff")
 
     # ------------------------------------------------------------------
     # escape hatch for the interactive shell / future verbs

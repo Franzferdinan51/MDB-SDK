@@ -59,6 +59,20 @@ def main() -> int:
             for line in logs[-3:]:
                 print(f"  {line}")
 
+            # Protocol 2 (full device/OS control): soft-check the new
+            # surface on firmwares that speak it; older ones skip.
+            if int(version.get("protocol", 1)) >= 2:
+                settings = watch.settings_all()
+                print(f"settings: {settings}")
+                sd = watch.sd_status()
+                print(f"sd: present={sd.get('sd_present')} total_mb={sd.get('sd_total_mb')}")
+                tasks = watch.sys_tasks()
+                print(f"tasks: {len(tasks)} running")
+                nvs = watch.nvs_list("muse")
+                print(f"nvs muse: {len(nvs)} entries")
+            else:
+                print("protocol 1 firmware: skipping protocol-2 checks")
+
             config = watch.config_get()
             summary = ", ".join(
                 f"{k}={'set' if v.get('present') else 'missing'}" for k, v in sorted(config.items())

@@ -75,6 +75,49 @@ def _one_shot(client: MdbClient, args) -> int:
     elif cmd == "reboot":
         _print_json(client.reboot())
         print("device is rebooting; the serial port will drop and reappear")
+    elif cmd == "settings":
+        if args.action == "set":
+            _print_json(client.settings_set(args.key, args.value))
+        elif args.action == "get" and args.key:
+            _print_json(client.settings_get(args.key))
+        else:
+            _print_json(client.settings_all())
+    elif cmd == "sd":
+        if args.action == "status":
+            _print_json(client.sd_status())
+        elif args.action == "mount":
+            _print_json(client.sd_mount())
+            _print_json(client.sd_status())
+        elif args.action == "ls":
+            for line in client.sd_ls(args.path):
+                print(line)
+        elif args.action == "cat":
+            print(client.sd_cat(args.path))
+        elif args.action == "rm":
+            _print_json(client.sd_rm(args.path))
+        elif args.action == "write":
+            _print_json(client.sd_write(args.path, (args.data or "").encode()))
+    elif cmd == "sys":
+        if args.what == "info":
+            _print_json(client.sys_info())
+        elif args.what == "heap":
+            _print_json(client.sys_heap())
+        else:
+            for line in client.sys_tasks():
+                print(line)
+    elif cmd == "nvs":
+        if args.action == "list":
+            for line in client.nvs_list(args.ns):
+                print(line)
+        elif args.action == "erase":
+            _print_json(client.nvs_erase(args.ns, args.key))
+        else:
+            _print_json(client.nvs_erase_ns(args.ns))
+    elif cmd == "loglevel":
+        _print_json(client.set_log_level(args.tag, args.level))
+    elif cmd == "poweroff":
+        _print_json(client.poweroff())
+        print("device powered off")
     elif cmd == "config-get":
         _print_json(client.config_get())
     elif cmd == "config-set":
@@ -207,6 +250,24 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("wake")
     sub.add_parser("sleep")
     sub.add_parser("reboot")
+    sp = sub.add_parser("settings", help="watch settings: [get [key]|set <key> <value>]")
+    sp.add_argument("action", nargs="?", choices=["get", "set"])
+    sp.add_argument("key", nargs="?")
+    sp.add_argument("value", nargs="?")
+    sp = sub.add_parser("sd", help="SD card control")
+    sp.add_argument("action", choices=["status", "mount", "ls", "cat", "rm", "write"])
+    sp.add_argument("path", nargs="?", default="/")
+    sp.add_argument("data", nargs="?", help="text payload for write")
+    sp = sub.add_parser("sys", help="OS state")
+    sp.add_argument("what", choices=["info", "heap", "tasks"])
+    sp = sub.add_parser("nvs", help="NVS storage")
+    sp.add_argument("action", choices=["list", "erase", "erase-ns"])
+    sp.add_argument("ns", nargs="?")
+    sp.add_argument("key", nargs="?")
+    sp = sub.add_parser("loglevel")
+    sp.add_argument("tag")
+    sp.add_argument("level")
+    sub.add_parser("poweroff")
     sub.add_parser("config-get")
     sp = sub.add_parser("config-set")
     sp.add_argument("setup_string")
