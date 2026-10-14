@@ -39,12 +39,24 @@ __all__ = [
     "TouchEvent",
     "rgb565_to_image",
     "DEFAULT_BAUD",
+    "AVATAR_NAMES",
 ]
 
 DEFAULT_BAUD = 115200
 MAX_COMMAND_BYTES = 1024
 
+#: Values the ``avatar`` setting accepts on current firmware (the watch
+#: face). ``gif`` is the rendered Juno clip set, ``pixel`` the procedural
+#: Muse character, ``pixelgif`` the animated pixel Juno; the rest are
+#: the Muse-Avatar collection (firmware >= 1.7.25; older builds accept
+#: the first three).
+AVATAR_NAMES = (
+    "gif", "pixel", "pixelgif", "jolly", "ink", "knight",
+    "bubble", "hires", "studio",
+)
+
 _KV_RE = re.compile(r"(\w+)=([^\s]+)")
+_REGS_LINE_RE = re.compile(r"^\w+:(?: [0-9a-fA-F]{2}=(?:[0-9a-fA-F]{2}|XX))+$")
 _TOUCH_RE = re.compile(
     r"^TOUCH x=(-?\d+) y=(-?\d+) state=(down|move|up)(?:\s+src=(\w+))?\s*$"
 )
@@ -503,8 +515,19 @@ class MdbClient:
 
     def settings_set(self, key: str, value: object) -> Dict[str, object]:
         """Set one setting live (volume, brightness, mic_gain, sleep_s,
-        speaker_on, wifi_on, ble_on). The device range-checks."""
+        speaker_on, wifi_on, ble_on, avatar). The device range-checks;
+        avatar takes one of AVATAR_NAMES."""
         return self._execute("settings", "set", key, value)
+
+    def set_avatar(self, name: str) -> Dict[str, object]:
+        """Switch the watch face. ``name`` is one of AVATAR_NAMES —
+        validated here so a typo fails locally instead of on the device."""
+        if name not in AVATAR_NAMES:
+            raise MdbError(
+                "bad_args",
+                f"unknown avatar {name!r}; expected one of {', '.join(AVATAR_NAMES)}",
+            )
+        return self.settings_set("avatar", name)
 
     def sd_status(self) -> dict:
         return self._json_command("sd status")
@@ -576,6 +599,84 @@ class MdbClient:
         """Power the watch off (PMIC cut). It stays off until the power
         button or USB power returns."""
         return self._execute("poweroff")
+
+    # ------------------------------------------------------------------
+    # diagnostics & OTA (later protocol-2 firmware: chirp/pump/i2cscan/
+    # regs/loopback/ota — ERR unknown_command on builds without them)
+    # ------------------------------------------------------------------
+    def _ok_text(self, verb: str, *args: object) -> str:
+        """Send a command whose OK line carries free text; return the
+        text after the ``OK `` prefix (status framing as _await_status)."""
+        line = "mdb " + verb + "".join(f" {a}" for a in args)
+        self._write_line(line)
+        deadline = time.monotonic() + self.timeout
+        while True:
+            text = self._read_line(deadline)
+            if text == "OK" or text.startswith("OK "):
+                return text[2:].strip()
+            if text == "ERR" or text.startswith("ERR "):
+                parts = text[3:].strip().split(None, 1)
+                code = parts[0] if parts else "internal"
+                msg = parts[1] if len(parts) > 1 else ""
+                raise MdbError(code, msg)
+            self._noise.append(text)
+
+    def chirp(self, volume: int = 35) -> Dict[str, object]:
+        """Gentle speaker test tone. The volume is runtime-only (the
+        device caps it at 80) and never rewrites the saved volume.
+        Someone should be holding the watch — it makes a sound."""
+        if not 1 <= int(volume) <= 80:
+            raise MdbError("bad_args", "chirp volume must be 1..80")
+        return self._execute("chirp", int(volume))
+
+    def pump(self) -> Dict[str, object]:
+        """Diagnostic: run one UI timer-handler pass under the display
+        adapter lock (what the adapter worker does each tick)."""
+        return self._execute("pump")
+
+    def i2cscan(self) -> str:
+        """Board I2C bus scan report as text. Board-dependent —
+        MdbError('unsupported') where the board has no scan."""
+        return self._ok_text("i2cscan")
+
+    def regs(self) -> str:
+        """Audio codec register dump: one ``dev: rr=vv ...`` line per
+        codec (the first rides the OK line, the rest stream after it).
+        Board-dependent — MdbError('unsupported') where unavailable."""
+        lines = [self._ok_text("regs")]
+        deadline = time.monotonic() + 0.5  # continuations follow at once
+        while True:
+            try:
+                line = self._read_line(deadline)
+            except MdbTimeoutError:
+                break
+            if _REGS_LINE_RE.match(line.strip()):
+                lines.append(line.strip())
+            else:
+                self._noise.append(line)
+                break
+        return "\n".join(lines)
+
+    def loopback(self) -> Dict[str, object]:
+        """Speaker->mic acoustic loopback sweep. WARNING: this plays a
+        sweep of test tones at full volume for ~40 s — only run it with
+        the wearer present and expecting it. Per-tone levels land in the
+        log ring; read them back with logs() once the sweep finishes."""
+        return self._execute("loopback")
+
+    def ota_status(self) -> Dict[str, object]:
+        """OTA state snapshot: {'state': ..., 'detail': ...}."""
+        return self._execute("ota", "status")
+
+    def ota_start(self, url: str, force: bool = False) -> Dict[str, object]:
+        """Start an over-the-air update from a firmware image URL.
+        ``force`` re-offers a version the device already recorded."""
+        if not url or any(c.isspace() for c in url):
+            raise MdbError("bad_args", "ota url must be a single token")
+        args: List[object] = ["start", url]
+        if force:
+            args.append("force")
+        return self._execute("ota", *args)
 
     # ------------------------------------------------------------------
     # escape hatch for the interactive shell / future verbs

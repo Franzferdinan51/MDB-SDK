@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0] or ".")
 
-from mdb_client import MdbClient, MdbError, Screenshot, TouchEvent  # noqa: E402
+from mdb_client import AVATAR_NAMES, MdbClient, MdbError, Screenshot, TouchEvent  # noqa: E402
 
 
 class FakeSerial:
@@ -245,6 +245,96 @@ class TestTouchStream(unittest.TestCase):
         events = list(client.touch_events(max_events=3))
         self.assertEqual([e.state for e in events], ["down", "move", "up"])
         self.assertIn("mdb touch stop", fake.written)
+
+
+class TestProtocol2Extensions(unittest.TestCase):
+    """Avatar setting + the diagnostic/OTA verbs of later protocol-2
+    firmware (MuseOS 1.7.23+)."""
+
+    def test_avatar_get_and_set(self):
+        script = {
+            "mdb settings get avatar": b"OK avatar=jolly\r\n",
+            "mdb settings set avatar studio": b"OK avatar=studio\r\n",
+        }
+        client, fake = make_client(script)
+        self.assertEqual(client.settings_get("avatar"), {"avatar": "jolly"})
+        self.assertEqual(client.set_avatar("studio"), {"avatar": "studio"})
+        self.assertEqual(
+            fake.written,
+            ["mdb settings get avatar", "mdb settings set avatar studio"],
+        )
+        for name in AVATAR_NAMES:  # every advertised face is settable
+            c2, f2 = make_client({f"mdb settings set avatar {name}": b"OK avatar=" + name.encode() + b"\r\n"})
+            self.assertEqual(c2.set_avatar(name), {"avatar": name})
+
+    def test_set_avatar_validates_locally(self):
+        client, fake = make_client({})
+        with self.assertRaises(MdbError):
+            client.set_avatar("bogus")
+        self.assertEqual(fake.written, [])  # nothing reached the device
+
+    def test_chirp_default_explicit_and_range(self):
+        script = {
+            "mdb chirp 35": b"OK chirp vol=35\r\n",
+            "mdb chirp 10": b"OK chirp vol=10\r\n",
+        }
+        client, fake = make_client(script)
+        self.assertEqual(client.chirp(), {"vol": 35})
+        self.assertEqual(client.chirp(10), {"vol": 10})
+        self.assertEqual(fake.written, ["mdb chirp 35", "mdb chirp 10"])
+        for bad in (0, 81):
+            with self.assertRaises(MdbError):
+                client.chirp(bad)
+        self.assertEqual(len(fake.written), 2)  # range errors stay local
+
+    def test_pump_i2cscan_loopback(self):
+        script = {
+            "mdb pump": b"OK pumped next=12 ticks=345\r\n",
+            "mdb i2cscan": b"OK found 0x18 0x38 0x40\r\n",
+            "mdb loopback": b"OK loopback requested, results in log\r\n",
+        }
+        client, fake = make_client(script)
+        self.assertEqual(client.pump(), {"next": 12, "ticks": 345})
+        self.assertEqual(client.i2cscan(), "found 0x18 0x38 0x40")
+        self.assertEqual(client.loopback(), {})
+        self.assertEqual(fake.written, ["mdb pump", "mdb i2cscan", "mdb loopback"])
+
+    def test_regs_two_codec_lines(self):
+        script = {
+            "mdb regs": b"OK es8311: 00=3c 01=00 44=ff\r\n"
+            b"es7210: 00=11 01=XX\r\n"
+        }
+        client, fake = make_client(script)
+        report = client.regs()
+        self.assertEqual(
+            report,
+            "es8311: 00=3c 01=00 44=ff\nes7210: 00=11 01=XX",
+        )
+        self.assertEqual(fake.written, ["mdb regs"])
+
+    def test_ota_status_and_start(self):
+        script = {
+            "mdb ota status": b"OK state=idle detail=none\r\n",
+            "mdb ota start https://example.invalid/fw.bin": b"OK ota=starting\r\n",
+            "mdb ota start https://example.invalid/fw.bin force": b"OK ota=starting\r\n",
+        }
+        client, fake = make_client(script)
+        self.assertEqual(client.ota_status(), {"state": "idle", "detail": "none"})
+        self.assertEqual(client.ota_start("https://example.invalid/fw.bin"), {"ota": "starting"})
+        self.assertEqual(
+            client.ota_start("https://example.invalid/fw.bin", force=True),
+            {"ota": "starting"},
+        )
+        with self.assertRaises(MdbError):
+            client.ota_start("two words")
+        self.assertEqual(
+            fake.written,
+            [
+                "mdb ota status",
+                "mdb ota start https://example.invalid/fw.bin",
+                "mdb ota start https://example.invalid/fw.bin force",
+            ],
+        )
 
 
 if __name__ == "__main__":

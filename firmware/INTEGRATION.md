@@ -49,6 +49,21 @@ hardware bringup):
 | `config get` | presence + length from the config store (§8) |
 | `config set` | hand the line remainder to the provisioning parser (§8) |
 
+Protocol 2 (owner control) and the later diagnostic verbs, as shipped in
+the MuseOS reference firmware:
+
+| verb | handler sketch |
+|---|---|
+| `settings [get\|set]` | the settings store: read all as JSON, or one key live (incl. `avatar`, the watch face) |
+| `sd …` | SD card: status / mount / ls / cat (refuses `*.key`) / write / rm |
+| `sys info\|heap\|tasks` | chip + partitions, heap state, FreeRTOS task list |
+| `nvs list\|erase\|erase-ns` | NVS inspection; erases require the `confirm` token |
+| `loglevel` | runtime esp_log level per tag |
+| `poweroff` | PMIC power cut |
+| `ota status\|start` | OTA state snapshot; start an update from an image URL |
+| `chirp` / `loopback` | speaker test tone (capped, runtime volume); speaker→mic sweep (results in the log) |
+| `pump` / `i2cscan` / `regs` | UI timer pass under the display lock; I2C bus scan; codec register dump (board hooks) |
+
 Any verb not implemented in a given build replies
 `ERR not_implemented …` rather than failing silently — hosts (and agents)
 plan around explicit answers.
@@ -197,6 +212,18 @@ static const mdb_cmd_t kCommands[] = {
     { "sleep",    cmd_sleep    },
     { "reboot",   cmd_reboot   },
     { "config",   cmd_config   },  // sub-verbs: get | set
+    { "settings", cmd_settings },  // protocol 2: get | set (incl. avatar)
+    { "sd",       cmd_sd       },  // protocol 2: status|mount|ls|cat|write|rm
+    { "sys",      cmd_sys      },  // protocol 2: info|heap|tasks
+    { "nvs",      cmd_nvs      },  // protocol 2: list|erase|erase-ns
+    { "loglevel", cmd_loglevel },
+    { "poweroff", cmd_poweroff },
+    { "ota",      cmd_ota      },  // status | start <url> [force]
+    { "chirp",    cmd_chirp    },  // capped speaker test tone
+    { "pump",     cmd_pump     },  // one UI timer pass, display lock held
+    { "i2cscan",  cmd_i2cscan  },  // board hook
+    { "regs",     cmd_regs     },  // board hook: codec registers
+    { "loopback", cmd_loopback },  // speaker->mic sweep; results in the log
     { NULL, NULL },
 };
 

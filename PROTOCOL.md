@@ -1,10 +1,12 @@
 # MDB Wire Protocol
 
-**Version 0.2** — authored to match the MDB implementation landing in
-AIWatchOS (reference firmware). This document is the contract between the
-firmware-side MDB dispatcher and every host tool (client library, CLI, MCP
-server). If a shipping firmware's `docs/mdb.md` ever disagrees with this
-draft, the firmware's bytes win and this spec takes a correcting revision.
+**Version 0.3** — a correcting revision tracking the shipping reference
+firmware, MuseOS (`muse-gadget-206`, firmware 1.7.x; MDB began in
+AIWatchOS's bringup line, which authored 0.2). This document is the
+contract between the firmware-side MDB dispatcher and every host tool
+(client library, CLI, MCP server). If a shipping firmware's `docs/mdb.md`
+ever disagrees with this draft, the firmware's bytes win and this spec
+takes a correcting revision.
 
 Keywords **MUST / MUST NOT / SHOULD** are normative.
 
@@ -180,6 +182,14 @@ Example: `OK version=0.1 protocol=1 firmware=aiwatchos-bringup3`
 | `config` | object | key → `true`/`false` **presence only** (e.g. `{"wifi": true, "hatch_token": false}`) |
 | `last_weather_age_s` | int \| null | seconds since last successful weather fetch |
 
+The reference firmware additionally reports: `fw_version`, `ota_slot`,
+`ota_state`, `paired` (bool), `mode` and `screen` (UI state names),
+`panic_count`, `battery_mv`, `usb_power` (bool), `sd_present`,
+`sd_total_mb`, `sd_free_mb`, `tts_key_on_sd` (presence only), and the
+display-flush counters `bands_queued`, `chunks_sent`, `chunk_isrs`,
+`band_notifies`, `band_stalls`, `band_fails`, `frame_ticks`,
+`frame_stage`, `mdb_streams`.
+
 Additional keys are permitted; hosts **MUST** ignore unknown keys.
 
 #### `mdb panic`
@@ -334,9 +344,9 @@ redaction rules of §6 still bind every verb below.
 
 | Command | Payload | Notes |
 | --- | --- | --- |
-| `mdb settings` | JSON (4.2) | All settings: volume, speaker_on, mic_gain, brightness, sleep_s, wifi_on, ble_on |
+| `mdb settings` | JSON (4.2) | All settings: volume, speaker_on, mic_gain, brightness, sleep_s, wifi_on, ble_on, avatar |
 | `mdb settings get <key>` | none | `OK key=value` |
-| `mdb settings set <key> <value>` | none | Device range-checks (volume 0–100, brightness 10–100, mic_gain 0–36, sleep_s 0–86400, booleans on/off); persists and applies live |
+| `mdb settings set <key> <value>` | none | Device range-checks (volume 0–100, brightness 10–100, mic_gain 0–36, sleep_s 0–86400, booleans on/off, avatar one of `gif`, `pixel`, `pixelgif`, `jolly`, `ink`, `knight`, `bubble`, `hires`, `studio` — the watch face; firmware ≥1.7.25, earlier builds accept the first three); persists and applies live |
 | `mdb sd status` | JSON (4.2) | sd_present, sd_total_mb, sd_free_mb, tts_key_on_sd |
 | `mdb sd mount` | none | Mount (or re-mount) the card; never formats |
 | `mdb sd ls [path]` | lines + `END ls <n>` | `D <name>` / `F <name> <size>` |
@@ -351,6 +361,13 @@ redaction rules of §6 still bind every verb below.
 | `mdb nvs erase-ns <ns> confirm` | none | Destructive; confirm token required |
 | `mdb loglevel <tag|\*> <level>` | none | Runtime esp_log control: none/error/warn/info/debug/verbose |
 | `mdb poweroff` | none | PMIC power cut; device stays off until power button / USB |
+| `mdb chirp [vol]` | none | Gentle speaker test tone at a capped, runtime-only volume (1–80, default 35); never rewrites the saved volume |
+| `mdb pump` | none | Diagnostic: one UI timer-handler pass under the display adapter lock; `OK pumped next=<ms> ticks=<n>` |
+| `mdb i2cscan` | none | Board I2C bus scan report (board-dependent; `ERR unsupported` where unavailable) |
+| `mdb regs` | text | Audio codec register dump: one `dev: rr=vv …` line per codec, the first riding the OK line, the rest streamed after it (board-dependent) |
+| `mdb loopback` | none | Speaker→mic acoustic loopback sweep; per-tone levels land in the log ring (read via `mdb logs`). **Loud and long (~40 s)** — run only with the wearer present |
+| `mdb ota status` | none | `OK state=<s> detail=<s>` — OTA state snapshot (a bare `mdb ota` means status) |
+| `mdb ota start <url> [force]` | none | Begin an OTA update from a firmware image URL; `force` re-offers a recorded version |
 
 List-shaped payloads end with an `END …` terminator line so hosts can
 frame them without timeouts (an extension of the counted-lines shape,

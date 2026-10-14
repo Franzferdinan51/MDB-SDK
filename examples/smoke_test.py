@@ -70,6 +70,9 @@ def main() -> int:
                 print(f"tasks: {len(tasks)} running")
                 nvs = watch.nvs_list("muse")
                 print(f"nvs muse: {len(nvs)} entries")
+                print(f"avatar: {settings.get('avatar')}")
+                ota = watch.ota_status()
+                print(f"ota: state={ota.get('state')}")
             else:
                 print("protocol 1 firmware: skipping protocol-2 checks")
 

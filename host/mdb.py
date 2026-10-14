@@ -25,10 +25,11 @@ import argparse
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mdb_client import MdbClient, MdbError  # noqa: E402
+from mdb_client import MdbClient, MdbError, MdbTimeoutError  # noqa: E402
 
 
 def _print_json(obj) -> None:
@@ -115,6 +116,27 @@ def _one_shot(client: MdbClient, args) -> int:
             _print_json(client.nvs_erase_ns(args.ns))
     elif cmd == "loglevel":
         _print_json(client.set_log_level(args.tag, args.level))
+    elif cmd == "chirp":
+        _print_json(client.chirp(args.vol))
+    elif cmd == "pump":
+        _print_json(client.pump())
+    elif cmd == "i2cscan":
+        print(client.i2cscan())
+    elif cmd == "regs":
+        print(client.regs())
+    elif cmd == "loopback":
+        print(
+            "warning: the loopback sweep plays ~40 s of full-volume test "
+            "tones — only run it with the wearer present.",
+            file=sys.stderr,
+        )
+        _print_json(client.loopback())
+        print("sweep requested; per-tone results land in the log — run `logs` in ~45 s")
+    elif cmd == "ota":
+        if args.action == "start":
+            _print_json(client.ota_start(args.url, args.force))
+        else:
+            _print_json(client.ota_status())
     elif cmd == "poweroff":
         _print_json(client.poweroff())
         print("device powered off")
@@ -142,6 +164,7 @@ commands (the ``mdb`` prefix is optional):
   tap <x> <y> | swipe <x1> <y1> <x2> <y2> [ms] | press <boot|ptt>
   goto <screen> | open <app> | wake | sleep | reboot
   config-get | config-set <setup-string>
+  chirp [vol] | pump | i2cscan | regs | loopback | ota [status]
   quit | exit | help
 """
 
@@ -203,6 +226,19 @@ def _shell(client: MdbClient) -> int:
                 _print_json(client.open_app(rest[0]))
             elif verb in ("wake", "sleep", "reboot"):
                 _print_json(getattr(client, verb)())
+            elif verb == "chirp":
+                _print_json(client.chirp(int(rest[0]) if rest else 35))
+            elif verb == "pump":
+                _print_json(client.pump())
+            elif verb == "i2cscan":
+                print(client.i2cscan())
+            elif verb == "regs":
+                print(client.regs())
+            elif verb == "loopback":
+                print("warning: ~40 s of full-volume test tones — wearer present only", file=sys.stderr)
+                _print_json(client.loopback())
+            elif verb == "ota":
+                _print_json(client.ota_status())
             elif verb == "config-get":
                 _print_json(client.config_get())
             elif verb == "config-set" and rest:
@@ -267,6 +303,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("loglevel")
     sp.add_argument("tag")
     sp.add_argument("level")
+    sp = sub.add_parser("chirp", help="gentle speaker test tone (runtime volume)")
+    sp.add_argument("vol", type=int, nargs="?", default=35)
+    sub.add_parser("pump", help="run one UI timer pass (diagnostic)")
+    sub.add_parser("i2cscan", help="scan the I2C bus (diagnostic)")
+    sub.add_parser("regs", help="dump audio codec registers (diagnostic)")
+    sub.add_parser("loopback", help="speaker->mic loopback sweep — LOUD, ~40 s")
+    sp = sub.add_parser("ota", help="over-the-air firmware update")
+    sp.add_argument("action", nargs="?", choices=["status", "start"], default="status")
+    sp.add_argument("url", nargs="?")
+    sp.add_argument("--force", action="store_true")
     sub.add_parser("poweroff")
     sub.add_parser("config-get")
     sp = sub.add_parser("config-set")
@@ -290,7 +336,14 @@ def main(argv=None) -> int:
         with MdbClient(args.port, baud=args.baud, timeout=args.timeout) as client:
             if args.command == "shell":
                 return _shell(client)
-            return _one_shot(client, args)
+            try:
+                return _one_shot(client, args)
+            except MdbTimeoutError:
+                # First contact after the watch has been idle can land
+                # inside its wake/boot window (a port open may reset it).
+                # Give it a moment and try the command exactly once more.
+                time.sleep(2.0)
+                return _one_shot(client, args)
     except MdbError as exc:
         print(f"ERR {exc.code}: {exc.message}", file=sys.stderr)
         return 1

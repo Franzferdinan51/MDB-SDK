@@ -20,7 +20,9 @@ a lock, the client connects lazily on the first call, and a dead link
 (e.g. after watch_reboot) is re-opened on the next call.
 
 Tools: watch_screenshot, watch_tap, watch_swipe, watch_press, watch_goto,
-watch_open, watch_logs, watch_health, watch_reboot.
+watch_open, watch_logs, watch_health, watch_reboot, watch_settings,
+watch_sd, watch_sys, watch_nvs, watch_poweroff, watch_chirp, watch_diag,
+watch_ota.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mdb_client import MdbClient, MdbError  # noqa: E402
 
 SERVER_NAME = "mdb"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 _lock = threading.Lock()
@@ -163,6 +165,24 @@ def _call_tool(name: str, args: dict) -> dict:
                 finally:
                     _drop_client()
                 return _text("poweroff accepted; the watch is off")
+            if name == "watch_chirp":
+                return _text(json.dumps(client.chirp(int(args.get("volume", 35)))))
+            if name == "watch_diag":
+                what = str(args.get("what", "regs"))
+                if what == "regs":
+                    return _text(client.regs())
+                if what == "i2cscan":
+                    return _text(client.i2cscan())
+                if what == "pump":
+                    return _text(json.dumps(client.pump()))
+                if what == "loopback":
+                    return _text(json.dumps(client.loopback()))
+                return _text(f"unknown diag: {what}", is_error=True)
+            if name == "watch_ota":
+                action = str(args.get("action", "status"))
+                if action == "start":
+                    return _text(json.dumps(client.ota_start(str(args["url"]), bool(args.get("force", False)))))
+                return _text(json.dumps(client.ota_status()))
             return _text(f"unknown tool: {name}", is_error=True)
         except MdbError as exc:
             return _text(f"ERR {exc.code}: {exc.message}", is_error=True)
@@ -254,9 +274,11 @@ TOOLS = [
         "name": "watch_settings",
         "description": (
             "Read or change the watch's settings live: volume, speaker_on, "
-            "mic_gain, brightness, sleep_s, wifi_on, ble_on. action=all "
-            "returns every setting as JSON; get/set take a key (set is "
-            "range-checked by the device and persists)."
+            "mic_gain, brightness, sleep_s, wifi_on, ble_on, avatar (the "
+            "watch face: gif, pixel, pixelgif, jolly, ink, knight, bubble, "
+            "hires, studio). action=all returns every setting as JSON; "
+            "get/set take a key (set is range-checked by the device and "
+            "persists)."
         ),
         "inputSchema": {
             "type": "object",
@@ -323,6 +345,56 @@ TOOLS = [
         "name": "watch_poweroff",
         "description": "Power the watch fully off (PMIC cut) until the power button or USB returns.",
         "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "watch_chirp",
+        "description": (
+            "Play a gentle speaker test tone. Volume 1–80 (default 35) is "
+            "runtime-only and capped by the device; it never changes the "
+            "saved volume. The watch makes a sound — only call this when "
+            "someone is with the watch and expecting it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"volume": {"type": "integer", "description": "1–80, default 35"}},
+            "required": [],
+        },
+    },
+    {
+        "name": "watch_diag",
+        "description": (
+            "Hardware diagnostics (later protocol-2 firmware). what=regs: "
+            "audio codec register dump, one 'dev: rr=vv ...' line per "
+            "codec. what=i2cscan: I2C bus scan report. what=pump: run one "
+            "UI timer pass under the display lock. what=loopback: "
+            "speaker→mic acoustic sweep — LOUD test tones at full volume "
+            "for ~40 s, results land in the log (watch_logs); only run it "
+            "with the wearer present. regs/i2cscan are board-dependent "
+            "and may return ERR unsupported."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"what": {"type": "string", "enum": ["regs", "i2cscan", "pump", "loopback"]}},
+            "required": ["what"],
+        },
+    },
+    {
+        "name": "watch_ota",
+        "description": (
+            "Over-the-air firmware update. action=status returns the OTA "
+            "state snapshot {state, detail}. action=start begins an "
+            "update from a firmware image URL (force re-offers a version "
+            "the device already recorded)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["status", "start"]},
+                "url": {"type": "string"},
+                "force": {"type": "boolean"},
+            },
+            "required": [],
+        },
     },
     {
         "name": "watch_reboot",
